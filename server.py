@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import python_socks
 import threading
 import socket
@@ -6,10 +7,11 @@ import time
 import os
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": ["file://*"]}})  # Allow file:// origins
 
-# Конфигурация прокси (хостится на Render.com)
-PROXY_HOST = "0.0.0.0"  # Render.com слушает все интерфейсы
-PROXY_PORT = int(os.environ.get('PORT', 1080))  # Порт от Render.com или 1080
+# Конфигурация прокси
+PROXY_HOST = "0.0.0.0"
+PROXY_PORT = int(os.environ.get('PORT', 1080))
 proxy_thread = None
 proxy_running = False
 
@@ -31,12 +33,12 @@ def connect():
             proxy_thread = threading.Thread(target=run_proxy_server)
             proxy_thread.daemon = True
             proxy_thread.start()
-            time.sleep(1)  # Даём время на запуск
-        ping = measure_ping("8.8.8.8")  # Пинг до Google DNS для теста
+            time.sleep(1)
+        ping = measure_ping("8.8.8.8")
         return jsonify({
             "status": "Подключено к ProxyLag",
             "ping": f"{ping} ms",
-            "host": "proxylagoptimizer.onrender.com",  # Замените на ваш домен
+            "host": "proxylagoptimizer.onrender.com",
             "port": PROXY_PORT
         })
     except Exception as e:
@@ -48,7 +50,7 @@ def disconnect():
     try:
         if proxy_thread and proxy_running:
             proxy_running = False
-            proxy_thread = None  # Остановка через python-socks требует доработки
+            proxy_thread = None  # Note: Proper socket shutdown needed
         return jsonify({"status": "Отключено", "ping": "N/A"})
     except Exception as e:
         return jsonify({"status": f"Ошибка: {str(e)}", "ping": "N/A"})
