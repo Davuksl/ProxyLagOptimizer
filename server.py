@@ -36,7 +36,7 @@ def connect():
         return jsonify({
             "status": "Подключено к ProxyLag",
             "ping": f"{ping} ms",
-            "host": "your-render-app.onrender.com",  # Замените на ваш домен
+            "host": "proxylagoptimizer.onrender.com",  # Замените на ваш домен
             "port": PROXY_PORT
         })
     except Exception as e:
