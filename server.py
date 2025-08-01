@@ -29,7 +29,9 @@ def run_proxy_server():
         except OSError as e:
             print(f"Port {PROXY_PORT} binding failed: {str(e)}")
             raise
-        proxy_server = python_socks.sync.socks5.Socks5Server(host=PROXY_HOST, port=PROXY_PORT)
+        # Use the correct Socks5Server class
+        from python_socks.sync import Socks5Server
+        proxy_server = Socks5Server(host=PROXY_HOST, port=PROXY_PORT)
         proxy_running = True
         print(f"SOCKS5 server running on {PROXY_HOST}:{PROXY_PORT}")
         proxy_server.serve_forever()
