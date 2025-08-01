@@ -7,30 +7,40 @@ import time
 import os
 
 app = Flask(__name__)
-# Explicitly allow CORS for localhost and file:// origins
 CORS(app, resources={r"/*": {"origins": ["http://localhost:8000", "file://*", "https://*"]}}, supports_credentials=True)
 
 # Конфигурация прокси
 PROXY_HOST = "0.0.0.0"
-PROXY_PORT = int(os.environ.get('SOCKS_PORT', 1080))  # SOCKS5 port
+PROXY_PORT = int(os.environ.get('SOCKS_PORT', 1081))
 proxy_thread = None
 proxy_running = False
+proxy_server = None
 
 def run_proxy_server():
-    global proxy_running
+    global proxy_running, proxy_server
     try:
-        print(f"Starting SOCKS5 server on {PROXY_HOST}:{PROXY_PORT}")
-        server = python_socks.sync.socks5.Socks5Server(host=PROXY_HOST, port=PROXY_PORT)
+        print(f"Attempting to start SOCKS5 server on {PROXY_HOST}:{PROXY_PORT}")
+        # Check if port is available
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((PROXY_HOST, PROXY_PORT))
+            sock.close()
+        except OSError as e:
+            print(f"Port {PROXY_PORT} binding failed: {str(e)}")
+            raise
+        proxy_server = python_socks.sync.socks5.Socks5Server(host=PROXY_HOST, port=PROXY_PORT)
         proxy_running = True
-        server.serve_forever()
+        print(f"SOCKS5 server running on {PROXY_HOST}:{PROXY_PORT}")
+        proxy_server.serve_forever()
     except Exception as e:
         proxy_running = False
-        print(f"Ошибка прокси: {type(e).__name__}: {str(e)}")
+        print(f"Ошибка запуска SOCKS5: {type(e).__name__}: {str(e)}")
+        raise
 
 @app.route('/connect', methods=['POST', 'OPTIONS'])
 def connect():
     if request.method == 'OPTIONS':
-        # Handle CORS preflight request
         response = jsonify({"status": "OK"})
         response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
         response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
@@ -38,11 +48,15 @@ def connect():
         return response
     try:
         print("Received /connect request")
+        global proxy_thread, proxy_running
         if proxy_thread is None or not proxy_thread.is_alive():
+            print("Starting new SOCKS5 proxy thread")
             proxy_thread = threading.Thread(target=run_proxy_server)
             proxy_thread.daemon = True
             proxy_thread.start()
-            time.sleep(1)
+            time.sleep(3)
+            if not proxy_running:
+                raise RuntimeError("SOCKS5 server failed to start")
         ping = measure_ping("8.8.8.8")
         response = jsonify({
             "status": "Подключено к ProxyLag",
@@ -66,10 +80,13 @@ def disconnect():
         return response
     try:
         print("Received /disconnect request")
-        global proxy_thread, proxy_running
-        if proxy_thread and proxy_running:
+        global proxy_thread, proxy_running, proxy_server
+        if proxy_thread and proxy_running and proxy_server:
+            print("Stopping SOCKS5 proxy")
             proxy_running = False
-            proxy_thread = None  # Note: Proper socket shutdown needed
+            proxy_server.shutdown()
+            proxy_server = None
+            proxy_thread = None
         response = jsonify({"status": "Отключено", "ping": "N/A"})
         response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
         return response
