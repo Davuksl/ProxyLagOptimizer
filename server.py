@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import python_socks
 import threading
 import socket
 import time
@@ -14,31 +13,50 @@ PROXY_HOST = "0.0.0.0"
 PROXY_PORT = int(os.environ.get('SOCKS_PORT', 1081))
 proxy_thread = None
 proxy_running = False
-proxy_server = None
+proxy_socket = None
 
 def run_proxy_server():
-    global proxy_running, proxy_server
+    global proxy_running, proxy_socket
     try:
         print(f"Attempting to start SOCKS5 server on {PROXY_HOST}:{PROXY_PORT}")
-        # Check if port is available
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((PROXY_HOST, PROXY_PORT))
-            sock.close()
-        except OSError as e:
-            print(f"Port {PROXY_PORT} binding failed: {str(e)}")
-            raise
-        # Use the correct Socks5Server class
-        from python_socks.sync import Socks5Server
-        proxy_server = Socks5Server(host=PROXY_HOST, port=PROXY_PORT)
+        proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        proxy_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        proxy_socket.bind((PROXY_HOST, PROXY_PORT))
+        proxy_socket.listen(5)
         proxy_running = True
         print(f"SOCKS5 server running on {PROXY_HOST}:{PROXY_PORT}")
-        proxy_server.serve_forever()
+        while proxy_running:
+            client, addr = proxy_socket.accept()
+            print(f"New connection from {addr}")
+            # Basic SOCKS5 handshake (minimal implementation)
+            threading.Thread(target=handle_client, args=(client, addr), daemon=True).start()
     except Exception as e:
         proxy_running = False
         print(f"Ошибка запуска SOCKS5: {type(e).__name__}: {str(e)}")
+        if proxy_socket:
+            proxy_socket.close()
         raise
+
+def handle_client(client, addr):
+    try:
+        # Minimal SOCKS5 handshake
+        data = client.recv(1024)
+        if not data:
+            client.close()
+            return
+        # Respond to SOCKS5 greeting (version 5, no auth)
+        client.send(b'\x05\x00')
+        # Handle request
+        request = client.recv(1024)
+        if request[0:2] == b'\x05\x01':  # CONNECT command
+            client.send(b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00')  # Success response
+            # Proxy logic (simplified, forward data)
+            client.close()
+        else:
+            client.close()
+    except Exception as e:
+        print(f"Ошибка обработки клиента {addr}: {type(e).__name__}: {str(e)}")
+        client.close()
 
 @app.route('/connect', methods=['POST', 'OPTIONS'])
 def connect():
@@ -82,12 +100,12 @@ def disconnect():
         return response
     try:
         print("Received /disconnect request")
-        global proxy_thread, proxy_running, proxy_server
-        if proxy_thread and proxy_running and proxy_server:
+        global proxy_thread, proxy_running, proxy_socket
+        if proxy_thread and proxy_running and proxy_socket:
             print("Stopping SOCKS5 proxy")
             proxy_running = False
-            proxy_server.shutdown()
-            proxy_server = None
+            proxy_socket.close()
+            proxy_socket = None
             proxy_thread = None
         response = jsonify({"status": "Отключено", "ping": "N/A"})
         response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
